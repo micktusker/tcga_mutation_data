@@ -9,6 +9,11 @@
 # The ssh tunnel is set up to the Tusk Redhat Pg database.
 
 # This works surprisingly well and can transfer tables with >1.5M rows quite quickly.
+
+# Issues: I have not found a way to transfer the tables to a specific PostgreSQL schema other than "public"
+# Need to do the schema transfer in Postgres itself.
+# The SQL to do this is: ALTER TABLE subject_mutations SET SCHEMA tcga_mutation_analysis;
+
 library(DBI)
 library(RSQLite)
 library(RPostgreSQL)
