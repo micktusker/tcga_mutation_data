@@ -144,17 +144,33 @@ CREATE TABLE expression.tcga_participant_mrna_expr_vals(
 COMMENT ON TABLE expression.tcga_participant_mrna_expr_vals IS
 'Contains the indivual mRNA expression levels for a given gene-cancer combination. Used to investigate potential relationship between expression of specific genes (PD-1 and PD-L1 specifically) and the number of missense (potential neo-antigens) in that sample.';
 
-INSERT INTO expression.tcga_participant_mrna_expr_vals(participant, tcga_cancer_code, sample_index, gene_name, expression_value)
-SELECT
-  participant,
-  tcga_cancer_code,
-  sample_index,
-  'PDCD1'::TEXT gene_name,
-  user_defined_functions.get_mrna_expression_for_participant_gene_cancer(participant, 'PDCD1', tcga_cancer_code) expression_value
-FROM
-  expression.tcga_mrna_participants_processed;
+CREATE OR REPLACE FUNCTION user_defined_functions.insert_tcga_participant_mrna_expr_vals_for_gene(p_gene_name TEXT)
+RETURNS INTEGER
+AS
+$$
+DECLARE
+  l_inserted_rowcount INTEGER;
+BEGIN
+  INSERT INTO expression.tcga_participant_mrna_expr_vals(participant, tcga_cancer_code, sample_index, gene_name, expression_value)
+  SELECT
+    participant,
+    tcga_cancer_code,
+    sample_index,
+    p_gene_name,
+    user_defined_functions.get_mrna_expression_for_participant_gene_cancer(participant, p_gene_name, tcga_cancer_code) expression_value
+  FROM
+    expression.tcga_mrna_participants_processed;
+  GET DIAGNOSTICS l_inserted_rowcount = ROW_COUNT;
+  RETURN l_inserted_rowcount;
+END;
+$$
+LANGUAGE plpgsql;
+-- Example invocation:
+SELECT user_defined_functions.insert_tcga_participant_mrna_expr_vals_for_gene('CD274');
+COMMENT ON FUNCTION user_defined_functions.insert_tcga_participant_mrna_expr_vals_for_gene(TEXT) IS 
+'This function inserts individual expression values for a participant-cancer code-gene combination into table "expression.tcga_participant_mrna_expr_vals" using UDF "user_defined_functions.get_mrna_expression_for_participant_gene_cancer". It assumes that the given gene name exists in table "expression.tcga_mrna_normalized_matrices" and that the data for this gene has not already been inserted.';
 
-
+-- Create a materialized view to hold the missense mutation count data.
 CREATE INDEX mv_mut_pcpt_proc_mut_file_id_idx ON tcga_mutation_analysis.tcga_mutation_participants_processed(mutation_file_id);
 CREATE MATERIALIZED VIEW tcga_mutation_analysis.participant_cancer_missense_count AS
 SELECT
@@ -175,4 +191,49 @@ COMMENT ON MATERIALIZED VIEW tcga_mutation_analysis.participant_cancer_missense_
 'Contains the total missense mutation count for each participant-cancer type combination. To be used to investigate the relationship between mRNA expression for genes PD-1 and PD-L1 and neo-antigens.';
 CREATE INDEX participant_cancer_missense_count_pcpt_tcga_idx ON tcga_mutation_analysis.participant_cancer_missense_count(participant, tcga_cancer_code);
 
+-- Make the final materialized view for examining the potential mutation burden and mRNA expression for genes PD-1 and PD-L1.
+CREATE MATERIALIZED VIEW tcga_mutation_analysis.mrna_expression_matched_to_missense_mutation_count AS
+SELECT DISTINCT
+  mrna_exp.participant,
+  mrna_exp.tcga_cancer_code,
+  mrna_exp.expression_value,
+  mut_count.missense_mutation_count,
+  'PD-L1'::TEXT gene_name
+FROM
+  expression.tcga_participant_mrna_expr_vals mrna_exp
+  JOIN
+    tcga_mutation_analysis.participant_cancer_missense_count mut_count
+      ON (mrna_exp.participant = mut_count.participant AND mrna_exp.tcga_cancer_code = mut_count.tcga_cancer_code)
+WHERE
+  mrna_exp.gene_name = 'CD274'
+UNION ALL
+SELECT DISTINCT
+  mrna_exp.participant,
+  mrna_exp.tcga_cancer_code,
+  mrna_exp.expression_value,
+  mut_count.missense_mutation_count,
+  'PD-1'::TEXT gene_name
+FROM
+  expression.tcga_participant_mrna_expr_vals mrna_exp
+  JOIN
+    tcga_mutation_analysis.participant_cancer_missense_count mut_count
+      ON (mrna_exp.participant = mut_count.participant AND mrna_exp.tcga_cancer_code = mut_count.tcga_cancer_code)
+WHERE
+  mrna_exp.gene_name = 'PDCD1'
+UNION ALL
+SELECT DISTINCT
+  mrna_exp.participant,
+  mrna_exp.tcga_cancer_code,
+  mrna_exp.expression_value,
+  mut_count.missense_mutation_count,
+  'CD8A'::TEXT gene_name
+FROM
+  expression.tcga_participant_mrna_expr_vals mrna_exp
+  JOIN
+    tcga_mutation_analysis.participant_cancer_missense_count mut_count
+      ON (mrna_exp.participant = mut_count.participant AND mrna_exp.tcga_cancer_code = mut_count.tcga_cancer_code)
+WHERE
+  mrna_exp.gene_name = 'CD8A';
+COMMENT ON MATERIALIZED VIEW tcga_mutation_analysis.mrna_expression_matched_to_missense_mutation_count IS
+'Combines mRNA expression for a given participant and cancer type with the total missense mutation count for that same participant-cancer type combination for the two genes "PD-1" and "PD-L1". The data stored here can be used to investigate the relationshipt between mRNA expression and potential neo-antigen levels each one of these genes for each of the TCGA cancer types.';
 
