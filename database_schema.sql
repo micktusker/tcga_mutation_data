@@ -155,5 +155,24 @@ FROM
   expression.tcga_mrna_participants_processed;
 
 
+CREATE INDEX mv_mut_pcpt_proc_mut_file_id_idx ON tcga_mutation_analysis.tcga_mutation_participants_processed(mutation_file_id);
+CREATE MATERIALIZED VIEW tcga_mutation_analysis.participant_cancer_missense_count AS
+SELECT
+  mv_pcpt.participant,
+  mv_pcpt.tcga_code tcga_cancer_code,
+  COUNT(sm.variant_classification) missense_mutation_count
+FROM
+  tcga_mutation_analysis.subject_mutations sm
+  JOIN
+    tcga_mutation_analysis.tcga_mutation_participants_processed mv_pcpt
+      ON sm.mutation_file_id = mv_pcpt.mutation_file_id
+WHERE
+  variant_classification = 'Missense_Mutation'
+GROUP BY
+  mv_pcpt.participant,
+  mv_pcpt.tcga_code;
+COMMENT ON MATERIALIZED VIEW tcga_mutation_analysis.participant_cancer_missense_count IS 
+'Contains the total missense mutation count for each participant-cancer type combination. To be used to investigate the relationship between mRNA expression for genes PD-1 and PD-L1 and neo-antigens.';
+CREATE INDEX participant_cancer_missense_count_pcpt_tcga_idx ON tcga_mutation_analysis.participant_cancer_missense_count(participant, tcga_cancer_code);
 
 
